@@ -1,0 +1,48 @@
+name: fleetrisk
+services:
+  db:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fleetrisk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+      POSTGRES_DB: ${POSTGRES_DB:-fleetrisk}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      FLEETRISK_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-fleetrisk}:${POSTGRES_PASSWORD:-local-development-only}@db:5432/${POSTGRES_DB:-fleetrisk}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      FLEETRISK_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-fleetrisk}:${POSTGRES_PASSWORD:-local-development-only}@db:5432/${POSTGRES_DB:-fleetrisk}
+      FLEETRISK_API_KEY: ${FLEETRISK_API_KEY:-}
+      FLEETRISK_MODEL_ID: ${FLEETRISK_MODEL_ID:-}
+      FLEETRISK_ALLOW_SYNTHETIC: ${FLEETRISK_ALLOW_SYNTHETIC:-false}
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts:ro
+    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+volumes:
+  pgdata:
